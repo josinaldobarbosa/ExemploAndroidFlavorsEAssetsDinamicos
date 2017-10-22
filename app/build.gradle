@@ -1,0 +1,137 @@
+apply plugin: 'com.android.application'
+
+import groovy.json.JsonSlurper
+import org.apache.commons.io.FilenameUtils
+
+def configFileJson = getJsonConfigFlavors()
+
+def getJsonConfigFlavors() {
+    def urlConfigFile = '{sua url}/config.json'
+    def configFile = new File('app/build/config.json')
+
+    try {
+        def downloaded = new URL(urlConfigFile)
+        downloaded.withInputStream { i -> configFile.withOutputStream { it << i }}
+        println('>>> Download configuração com sucesso!')
+    } catch (all) {
+        println('>>> Error download configuração, pegando arquivo localmente em ' + configFile.getAbsolutePath())
+    }
+
+    return new JsonSlurper().parseText(configFile.getText())
+}
+
+android {
+    compileSdkVersion 25
+    buildToolsVersion "24.0.3"
+    defaultConfig {
+        applicationId "br.com.example.testandobuildexterno"
+        minSdkVersion 10
+        targetSdkVersion 25
+        versionCode 1
+        versionName "1.0"
+        testInstrumentationRunner "android.support.test.runner.AndroidJUnitRunner"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    productFlavors {
+
+        configFileJson.each {
+            it.productFlavors.each {
+                // Required
+                def _app = it.app
+                def _applicationId = it.applicationId
+
+                // Optional
+                def _minSdkVersion = it.minSdkVersion
+                def _customText = it.customText
+
+                if ("$_app" != "null") {
+                    "$_app" {
+                        if ("$_applicationId" != "null") {
+                            applicationId "$_applicationId"
+                        }
+
+                        if ("$_minSdkVersion" != "null") {
+                            minSdkVersion "$_minSdkVersion"
+                        }
+
+                        if ("$_customText" != "null") {
+                            buildConfigField "String", "CUSTOM_TEXT", "\"$_customText\""
+                        }
+
+                        // Exemplo de uma propriedade especifica
+                        if ("$_app" == "myApp2") {
+                            versionName "10"
+                        }
+                    }
+                }
+            }
+        }
+
+    }
+
+}
+
+task updateAssets << {
+
+    configFileJson.each {
+        it.productFlavors.each {
+            def urlAssets = it.assets
+            def app = it.app
+
+            if ("$urlAssets" == "null" || "$app" == "null") {
+                return
+            }
+
+            println(">>> Checking updateAssets to $app")
+
+            // Download and save file
+            def tempDir = File.createTempDir()
+            tempDir.deleteOnExit()
+            def fileName = FilenameUtils.getName("$urlAssets")
+            def filePath = "$tempDir/$fileName"
+            def folderDest = "src/$app"
+
+            // Cria arquivo na pasta temp
+            new File("$filePath").withOutputStream { os ->
+                new URL(urlAssets).withInputStream { is ->
+                    os << is
+                }
+            }
+
+            def flavorExist = file("$folderDest").exists()
+
+            // unzip arquivos e coloca no flavor
+            exec {commandLine 'unzip', '-o', "$filePath", '-d', "$folderDest"}
+            def action
+
+            if (flavorExist) {
+                println(">>> Update assets: $app" )
+                exec {commandLine 'git', 'add', "$folderDest", '--update'}
+                action = 'updated'
+            } else {
+                println(">>> Creating new flavor: $app" )
+                exec {commandLine 'git', 'add', "$folderDest"}
+                action = 'created'
+            }
+
+            exec {commandLine "sh", "../sh-scripts/update_assets.sh", "$folderDest", "$app", "$action"}
+        }
+    }
+
+}
+
+dependencies {
+    compile fileTree(dir: 'libs', include: ['*.jar'])
+    androidTestCompile('com.android.support.test.espresso:espresso-core:2.2.2', {
+        exclude group: 'com.android.support', module: 'support-annotations'
+    })
+    compile 'com.android.support:appcompat-v7:25.1.1'
+    testCompile 'junit:junit:4.12'
+}
